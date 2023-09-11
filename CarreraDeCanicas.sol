@@ -191,6 +191,11 @@ contract CarrerasDeCanicas is ReentrancyGuard {
             );
         }
 
+        // Agregar la canica actual al mapping de canicas apostadas por el usuario para esta carrera
+        canicasApostadasPorUsuarioYCarrera[msg.sender][_carreraId].push(
+            _canicaId
+        );
+
         //obtiene la cantidad
         uint256 _cantidad = msg.value;
 
@@ -288,7 +293,7 @@ contract CarrerasDeCanicas is ReentrancyGuard {
      * @dev Devuelve la cantidad total de comisión acumulada por el propietario.
      * @return La cantidad total de comisión acumulada.
      */
-    function obtenerComisionOwnerAcumulada() public view returns (uint256) {
+    function obtenerComisionAcumulada() public view returns (uint256) {
         return gananciasPendientes[owner];
     }
 
