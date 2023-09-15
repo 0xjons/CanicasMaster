@@ -59,6 +59,8 @@ contract CarrerasDeCanicas is ReentrancyGuard {
     uint256 public ultimoRetiroComision;
     // Periodo de bloqueo para retirar comisiones (7 días en segundos)
     uint256 public periodoBloqueo = 604800;
+    // Variable para rastrear el bote acumulado
+    uint256 public boteAcumulado;
     // Mapping complejo para almacenar las apuestas por carrera y canica
     mapping(uint256 => mapping(uint256 => Apuesta[]))
         public apuestasPorCarreraYCanica;
@@ -71,6 +73,15 @@ contract CarrerasDeCanicas is ReentrancyGuard {
     // Modificador para restringir el acceso solo al propietario
     modifier soloOwner() {
         require(msg.sender == owner, "No eres el propietario");
+        _;
+    }
+
+    // Modificador para verificar que no haya carreras activas
+    modifier sinCarrerasActivas() {
+        require(
+            carreras.length == 0 || carreras[carreras.length - 1].finalizada,
+            "Aun hay una carrera activa"
+        );
         _;
     }
 
@@ -238,29 +249,49 @@ contract CarrerasDeCanicas is ReentrancyGuard {
         Apuesta[] memory apuestasGanadoras = apuestasPorCarreraYCanica[
             _carreraId
         ][_canicaGanadora];
-        uint256 totalApostadoCanicaGanadora = 0;
-        for (uint256 i = 0; i < apuestasGanadoras.length; i++) {
-            totalApostadoCanicaGanadora += apuestasGanadoras[i].cantidad;
+
+        uint256 totalGanadores = apuestasGanadoras.length;
+
+        if (totalGanadores == 0) {
+            // No hay ganadores, no se distribuye nada
+            // primero calculo la comisión del bote
+            uint256 bote = obtenerBotePorCarrera(_carreraId);
+            //añadir comisión a las ganancias pendientes del owner
+            uint256 comisionBoteOwner = _calcularComisionBote(bote);
+            gananciasPendientes[owner] += comisionBoteOwner;
+            //el bote acumulado es igual al bote de la carrera menos la comisión del owner.
+            boteAcumulado = bote - comisionBoteOwner;
+            //emitimos evento
+            emit CarreraFinalizada(_carreraId, _canicaGanadora);
+            return;
+
+        // si hay ganadores
+        } else {
+            uint256 boteTotal = obtenerBotePorCarrera(_carreraId) + boteAcumulado;
+
+            for (uint256 i = 0; i < apuestasGanadoras.length; i++) {
+                address ganador = apuestasGanadoras[i].apostador;
+                uint256 cantidadApostada = apuestasGanadoras[i].cantidad;
+                uint256 gananciaPorGanador = (boteTotal * cantidadApostada) /
+                    totalGanadores;
+                gananciasPendientes[ganador] += gananciaPorGanador;
+            }
         }
 
-        uint256 totalDistribuido = 0;
-        for (uint256 i = 0; i < apuestasGanadoras.length - 1; i++) {
-            // Nota el -1 aquí
-            uint256 porcentajeGanancia = (apuestasGanadoras[i].cantidad *
-                1e18) / totalApostadoCanicaGanadora;
-            uint256 ganancia = (address(this).balance * porcentajeGanancia) /
-                1e18;
+        emit CarreraFinalizada(_carreraId, _canicaGanadora);
+    }
 
-            totalDistribuido += ganancia;
-            gananciasPendientes[apuestasGanadoras[i].apostador] += ganancia;
-        }
-
-        // Distribuir el resto al último apostador
-        gananciasPendientes[
-            apuestasGanadoras[apuestasGanadoras.length - 1].apostador
-        ] += address(this).balance - totalDistribuido;
-
-        emit CarreraFinalizada(_carreraId, _canicaGanadora); // Emitimos el evento
+    /**
+     * @dev internal. Calcula comisión de bote después de finalizar una apuesta sin ganadores.
+     */
+    function _calcularComisionBote(uint256 _cantidad)
+        internal
+        view
+        returns (uint256)
+    {
+        // Calcular la comisión y la cantidad apostada después de deducir la comisión
+        uint256 cantidadComision = (_cantidad * comisionPorcentaje) / 100;
+        return _cantidad - cantidadComision;
     }
 
     /**
@@ -275,9 +306,9 @@ contract CarrerasDeCanicas is ReentrancyGuard {
     }
 
     /**
-     * @dev Permite al propietario retirar la comisión acumulada, respetando el periodo de bloqueo.
+     * @dev Permite al propietario retirar la comisión acumulada, respetando el periodo de bloqueo y la ausencia de carreras activas.
      */
-    function retirarComision() public soloOwner {
+    function retirarComision() public soloOwner sinCarrerasActivas {
         require(
             block.timestamp >= ultimoRetiroComision + periodoBloqueo,
             "Aun no ha pasado el tiempo de bloqueo"
